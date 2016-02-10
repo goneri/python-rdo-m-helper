@@ -15,6 +15,7 @@
 # under the License.
 
 import logging
+import time
 
 from rdomhelper.server import Server
 
@@ -40,19 +41,28 @@ class Undercloud(Server):
             checksum=guest_image_checksum,
             dest='/home/stack/guest_image.qcow2',
             user='stack')
+        hostname = self.run('hostname')[0].rstrip('\n')
         hostname_s = self.run('hostname -s')[0].rstrip('\n')
         hostname_f = self.run('cat /etc/hostname')[0].rstrip('\n')
-        self.run("sed 's,127.0.0.1,127.0.0.1 %s %s,' /etc/hosts" % (hostname_s, hostname_f))
+        self.run("sed -i 's,127.0.0.1,127.0.0.1 %s %s %s undercloud.openstacklocal,' /etc/hosts" % (hostname_s, hostname_f, hostname))
         self.set_selinux('permissive')
 
         instack_undercloud_ver, _ = self.run('repoquery --whatprovides /usr/share/instack-undercloud/puppet-stack-config/puppet-stack-config.pp')
         if instack_undercloud_ver.rstrip('\n') == 'instack-undercloud-0:2.2.0-1.el7ost.noarch':
             LOG.warn('Workaround for BZ1298189')
             self.run("sed -i \"s/.*Keystone_domain\['heat_domain'\].*/Service\['keystone'\] -> Class\['::keystone::roles::admin'\] -> Class\['::heat::keystone::domain'\]/\" /usr/share/instack-undercloud/puppet-stack-config/puppet-stack-config.pp")
+
+        # Ensure we will get a MTU 1400 on the br-ctlplane...
+        # TODO(Gonéri): should use jq here instead
+        # https://review.openstack.org/#/c/288041
+        self.yum_install(['instack-undercloud'])
+        self.run('sed -i \'s/"name": "br-ctlplane",/"name": "br-ctlplane",\\n      "mtu": 1400,/\' /usr/share/instack-undercloud/undercloud-stack-config/config.json.template')
+        self.run('sed -i \'s/"primary": "true"/"primary": "true",\\n        "mtu": 1400/\' /usr/share/instack-undercloud/undercloud-stack-config/config.json.template')
+
+        self.run('openstack undercloud install', user='stack')
         if self.run('rpm -qa openstack-ironic-api')[0].rstrip('\n') == 'openstack-ironic-api-4.2.2-3.el7ost.noarch':
             LOG.warn('Workaround for BZ1297796')
             self.run('systemctl start openstack-ironic-api.service')
-        self.run('openstack undercloud install', user='stack')
         self.add_environment_file(user='stack', filename='stackrc')
         self.run('heat stack-list', user='stack')
 
@@ -71,16 +81,30 @@ class Undercloud(Server):
         self._fetch_overcloud_images(overcloud_images)
         self.run('openstack overcloud image upload', user='stack')
         self.run('openstack baremetal import --json instackenv.json', user='stack')
+        time.sleep(180)
         self.run('openstack baremetal configure boot', user='stack')
+        # TODO: set the correct IP addresses
+
+
+    def start_overcloud_inspector(self):
+        self.add_environment_file(user='stack', filename='stackrc')
+        self.run('openstack baremetal introspection bulk start', user='stack')
+
+    def start_overcloud_deploy(self):
+        self.add_environment_file(user='stack', filename='stackrc')
         self.run('openstack flavor create --id auto --ram 4096 --disk 40 --vcpus 1 baremetal', user='stack', success_status=(0, 1))
         self.run('openstack flavor set --property "cpu_arch"="x86_64" --property "capabilities:boot_option"="local" baremetal', user='stack')
+        self.run('openstack flavor set --property "capabilities:profile"="baremetal" baremetal', user='stack')
         self.run('for uuid in $(ironic node-list|awk \'/available/ {print $2}\'); do ironic node-update $uuid add properties/capabilities=profile:baremetal,boot_option:local; done', user='stack')
+        time.sleep(180)
         self.run('openstack overcloud deploy --debug ' +
                  '--templates ' +
                  '--log-file overcloud_deployment.log ' +
                  '--libvirt-type=qemu ' +
                  '--ntp-server north-america.pool.ntp.org ' +
-                 '--control-scale 1 ' +
+                 '--control-scale 3 ' +
+                 '-e /usr/share/openstack-tripleo-heat-templates/environments/puppet-pacemaker.yaml ' +
+#                 '-e /usr/share/openstack-tripleo-heat-templates/environments/network-isolation.yaml ' +
                  '--compute-scale 1 ' +
                  '--ceph-storage-scale 0 ' +
                  '--block-storage-scale 0 ' +

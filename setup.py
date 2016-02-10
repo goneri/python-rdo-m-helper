@@ -62,7 +62,8 @@ setuptools.setup(
     ],
     entry_points={
         "console_scripts": [
-            "chainsaw = rdomhelper.shell:main"
+            "chainsaw = rdomhelper.shell:main",
+            "openstack_virtual_baremetal = rdomhelper.ovb_shell:main"
         ],
     }
 )

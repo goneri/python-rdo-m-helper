@@ -49,7 +49,7 @@ class Host0(Server):
 
     def build_undercloud_on_libvirt(self, image_path, image_checksum, rhsm=None):
         """Build the Undercloud by using instack-virt-setup script."""
-        self.run('sysctl net.ipv4.ip_forward=1')
+        
         self.fetch_image(path=image_path, checksum=image_checksum, dest='/home/stack/guest_image.qcow2',
                          user='stack')
         # NOTE(Gonéri): this is a hack for our OpenStack, the MTU of its outgoing route

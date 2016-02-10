@@ -14,7 +14,6 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-
 import logging
 import os
 
@@ -52,6 +51,9 @@ class Server(object):
             if 'Please login as the user "cloud-user"' in result:
                 image_user = 'cloud-user'
                 _root_ssh_client.stop()
+            elif 'Please login as the user "fedora"' in result:
+                image_user = 'fedora'
+                _root_ssh_client.stop()
             else:
                 self._ssh_pool.add_ssh_client('root', _root_ssh_client)
                 return
@@ -73,8 +75,8 @@ class Server(object):
         _root_ssh_client.start()
         self._ssh_pool.add_ssh_client('root', _root_ssh_client)
 
-    def send_file(self, local_path, remote_path, user='root'):
-        return self._ssh_pool.send_file(user, local_path, remote_path)
+    def send_file(self, local_path, remote_path, user='root', unix_mode=None):
+        return self._ssh_pool.send_file(user, local_path, remote_path, unix_mode)
 
     def create_file(self, path, content, mode='w', user='root'):
         return self._ssh_pool.create_file(user, path, content, mode)
@@ -107,15 +109,17 @@ class Server(object):
         # Ensure the RHEL beta channel are disabled
         self.run('rm /etc/pki/product/69.pem', ignore_error=True)
         custom_log = 'subscription-manager register --username %s --password *******' % login
-        self.run(
+        _, code = self.run(
             'subscription-manager register --username %s --password %s' % (
                 login, password),
+            # code 64: already registred
             success_status=(0, 64),
             custom_log=custom_log)
-        if pool_id:
-            self.run('subscription-manager attach --pool %s' % pool_id)
-        else:
-            self.run('subscription-manager attach --auto')
+        if code == 0:
+            if pool_id:
+                self.run('subscription-manager attach --pool %s' % pool_id)
+            else:
+                self.run('subscription-manager attach --auto')
 
     def enable_repositories(self, repositories):
         rhsm_channels = [r['name'] for r in repositories if r['type'] == 'rhsm_channel']

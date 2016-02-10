@@ -68,6 +68,7 @@ def get_a_floating_ip(nova_api):
 def add_a_floating_ip(nova_api, os_instance):
     floating_ip = get_a_floating_ip(nova_api)
     os_instance.add_floating_ip(floating_ip.ip)
+    LOG.info("floating ip '%s' attached" % floating_ip.ip)
     return floating_ip.ip
 
 
